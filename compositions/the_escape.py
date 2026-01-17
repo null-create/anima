@@ -79,7 +79,7 @@ def gen_piano_chords() -> list:
     return chords
 
 
-def gen_long_melody() -> Melody:
+def gen_melody() -> Melody:
     print("writing melody...")
 
     melody = Melody(tempo=TEMPO, instrument=PIANO)
@@ -87,6 +87,44 @@ def gen_long_melody() -> Melody:
     melody.notes = ["F5", "C5", "G#5", "G5", "C6", "E5", "C#6", "C6", "Bb5", "Eb5"]
     melody.rhythms = [2.0, 2.0, 3.0, 4.0, 2.0, 2.0, 4.0, 4.0, 3.0, 2.0]
     melody.dynamics = [DYNAMIC] * len(melody.notes)
+
+    return melody
+
+
+def gen_rand_melody() -> Melody:
+    print("writing longer random melody...")
+
+    melody = Melody(tempo=TEMPO, instrument=PIANO)
+
+    source_scale = [
+        "F4",
+        "G4",
+        "G#4",
+        "Bb4",
+        "C5",
+        "C#5",
+        "Eb5",
+        "F5",
+        "G5",
+        "G#5",
+        "Bb5",
+        "C6",
+        "C#6",
+        "Eb6",
+        "F6",
+        "G6",
+        "G#6",
+        "Bb6",
+    ]
+    # NOTE: 0.5 was added twice on purpose  in order to make it twice
+    # as likely to be chosen as it ordinarily would have been
+    source_rhythms = [0.5, 0.5, 2.0, 3.0]
+
+    # Choose elements
+    total = randint(9, 19)
+    melody.notes = [choice(source_scale) for _ in range(total)]
+    melody.rhythms = [choice(source_rhythms) for _ in range(total)]
+    melody.dynamics = [DYNAMIC] * total
 
     return melody
 
