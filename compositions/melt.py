@@ -46,10 +46,9 @@ def melt(tempo: str = None, title: str = None) -> Composition:
     else:
         comp = create.init_comp(tempo)
     if title is None or title == "":
-        title_full = comp.title + " for string trio"
+        comp.title + " for string trio"
     else:
-        comp.title = title
-        title_full = title + " for string trio"
+        comp.title = title + " for string trio"
 
     trio = [
         Melody(tempo=comp.tempo, instrument="Viola"),
@@ -60,8 +59,7 @@ def melt(tempo: str = None, title: str = None) -> Composition:
     comp.ensemble = "string trio"
 
     # these will be used as empty containers for each new section
-    for inst in range(len(trio)):  # add instruments to comp object
-        comp.instruments.append(trio[inst])
+    comp.instruments += trio
 
     # dictionary of different sections from the composition.
     # can be used to mix and match material!
@@ -76,34 +74,31 @@ def melt(tempo: str = None, title: str = None) -> Composition:
     print("...notes:", root_scale)
     print("...pcs:", pcs)
 
-    # export_midi source info to each Melody() object
-    for q in range(len(trio)):
-        trio[q].pcs.append(pcs)
-        trio[q].source_notes = source
+    # add source info to each Melody() object
+    for inst in range(len(trio)):
+        trio[inst].pcs.append(pcs)
+        trio[inst].source_notes = source
 
     # write individual *choral* lines
     total_notes = randint(12, 30)
-    for q in range(len(trio)):
-        trio[q] = write_line(trio[q], source, total_notes)
+    for inst in range(len(trio)):
+        trio[inst] = write_line(trio[inst], source, total_notes)
 
     # create rhythms and dynamics
-    rhy = [RHYTHMS[randint(1, 3)] for i in range(total_notes)]
-    dyn = [65 for i in range(total_notes)]
+    rhy = [RHYTHMS[randint(1, 3)] for _ in range(total_notes)]
+    dyn = [65 for _ in range(total_notes)]
 
-    # add rhythms and dynamics to each part
-    for q in range(len(trio)):
-        trio[q].rhythms.extend(rhy)
-        trio[q].dynamics.extend(dyn)
+    # add shared rhythms and dynamics to each part
+    for inst in range(len(trio)):
+        trio[inst].rhythms.extend(rhy)
+        trio[inst].dynamics.extend(dyn)
 
     # export_midi all parts then write out
-    for q in range(len(trio)):
-        comp.add_part(trio[q], trio[q].instrument)
+    for inst in range(len(trio)):
+        comp.add_part(trio[inst], trio[inst].instrument)
 
     # export_midi MIDI output
     export_midi(comp)
-
-    # export_midi info documentation about the composition
-    # gen_info_doc(file_name=comp.txt_file_name, comp=comp, data=None)
 
     print("\n...success!")
 
@@ -127,7 +122,7 @@ def write_line(part: Melody, scale: list, total: int, asyn: bool = False) -> Mel
         # NOTE: this will redefine supplied total if asyn is True
         total = randint(12, 30)
 
-    for things in range(total):
+    for _ in range(total):
         # limited to octaves 4 and 5 for violins
         if part.instrument == "Violin":
             note = scale[randint(13, len(scale) - 1)]
