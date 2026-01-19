@@ -11,6 +11,57 @@ ROOT = Path(__file__).parent.parent
 # location to write MIDI files to
 MIDI_FOLDER = join(ROOT, "midi")
 
+# Generation range constants
+MIN_NOTES = 3
+MAX_NOTES = 50
+MIN_RHYTHMS = 3
+MAX_RHYTHMS = 30
+MIN_DYNAMICS = 3
+MAX_DYNAMICS = 30
+MIN_CHORDS = 5
+MAX_CHORDS = 11
+MIN_SCALES = 3
+MAX_SCALES = 8
+MIN_SCALE_SIZE = 5
+MAX_SCALE_SIZE = 8
+MIN_CHORD_NOTES = 2
+MAX_CHORD_NOTES = 9
+
+# Octave range constants
+MIN_OCTAVE = 2
+MAX_OCTAVE = 5
+GENERATION_OCTAVE_START = 2
+GENERATION_OCTAVE_END = 5
+
+# Instrument range constants
+MELODIC_INSTRUMENT_END = 110
+KEYBOARD_INSTRUMENT_START = 0
+KEYBOARD_INSTRUMENT_END = 8
+
+# String instrument octave ranges (indices into source scales)
+VIOLIN_OCTAVE_START = 13
+VIOLA_OCTAVE_START = 7
+VIOLA_OCTAVE_END = 8
+CELLO_OCTAVE_START = 0
+CELLO_OCTAVE_END = 16
+
+# MIDI note range
+MIN_MIDI_NOTE = 21
+MAX_MIDI_NOTE = 108
+
+# Tempo constants
+BASE_TEMPO = 60.0
+MIN_VALID_TEMPO = 40.0
+MAX_VALID_TEMPO = 280.0
+
+# Transposition range
+MIN_TRANSPOSITION = 1
+MAX_TRANSPOSITION = 11
+
+# Dynamics range
+MIN_VELOCITY = 0
+MAX_VELOCITY = 127
+
 # The alphabet.
 ALPHABET = [
     "a",

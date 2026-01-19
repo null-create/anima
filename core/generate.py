@@ -1,21 +1,20 @@
 """
-This module handles all generative methods.
+This module handles all generative methods for musical composition.
 """
 
 import urllib.request
 from math import floor
 from names import get_full_name
 from datetime import datetime as date
-from random import seed, randint, sample, choice
+from random import Random
+from typing import List, Tuple, Dict, Optional, Union
 
 from utils.mapping import map_data
-from utils.txtfile import gen_info_doc
 from utils.midi import export_midi
-from utils.tools import to_str, oct_equiv, scale_to_tempo, scale_limit
+from utils.tools import to_str, scale_to_tempo, scale_limit
 
 from core.constants import (
     NOTES,
-    CHROMATIC_SCALE,
     PITCH_CLASSES,
     RHYTHMS,
     REST,
@@ -25,11 +24,30 @@ from core.constants import (
     SCALES,
     ARPEGGIOS,
     SETS,
-    INTERVALS,
     RANGE,
+    MIN_NOTES,
+    MAX_NOTES,
+    MIN_RHYTHMS,
+    MAX_RHYTHMS,
+    MIN_DYNAMICS,
+    MAX_DYNAMICS,
+    MIN_CHORDS,
+    MAX_CHORDS,
+    MIN_SCALES,
+    MAX_SCALES,
+    MIN_SCALE_SIZE,
+    MAX_SCALE_SIZE,
+    MIN_CHORD_NOTES,
+    MAX_CHORD_NOTES,
+    MIN_OCTAVE,
+    MAX_OCTAVE,
+    MELODIC_INSTRUMENT_END,
+    KEYBOARD_INSTRUMENT_START,
+    KEYBOARD_INSTRUMENT_END,
+    GENERATION_OCTAVE_START,
+    GENERATION_OCTAVE_END,
+    BASE_TEMPO,
 )
-from core.modify import Modify
-from core.analyze import Analyze
 
 from containers.bar import Bar
 from containers.chord import Chord
@@ -37,510 +55,492 @@ from containers.melody import Melody
 from containers.composition import Composition
 
 
+class NoteGenerationResult:
+    """Container for note generation results."""
+
+    def __init__(self, notes: List[str], meta_data: List[str], source_notes: List[str]):
+        self.notes = notes
+        self.meta_data = meta_data
+        self.source_notes = source_notes
+
+
 class Generate:
     """
-    This class handles all generative functions.
+    Class handling all generative functions for musical composition.
     """
 
-    def __init__(self):
-        seed()
-        self.mod = Modify()  # modifier class
+    def __init__(self, random_seed: Optional[int] = None):
+        """
+        Initialize generator with optional random seed.
 
-    ### TITLE ###
+        Args:
+            random_seed: Optional seed for reproducible random generation
+        """
+        self.random = Random(random_seed)
 
-    @staticmethod
-    def new_title() -> str:
+    def _randint(self, a: int, b: int) -> int:
+        """Wrapper for random integer generation."""
+        return self.random.randint(a, b)
+
+    def _choice(self, seq):
+        """Wrapper for random choice."""
+        return self.random.choice(seq)
+
+    def _get_default_count(self, min_val: int, max_val: int) -> int:
+        """Get a random count within a default range."""
+        return self._randint(min_val, max_val)
+
+    def generate_title(self) -> str:
         """
         Generate a composition title from 1-4 random words.
 
-            Random word generation technique from:
-            https://stackoverflow.com/questions/18834636/random-word-generator-python
+        Returns:
+            Generated title string or "untitled" if word list unavailable
         """
         try:
-            url = "https://www.mit.edu/~ecprice/wordlist.10000"  # get word list
+            url = "https://www.mit.edu/~ecprice/wordlist.10000"
             response = urllib.request.urlopen(url)
-            text = response.read().decode()  # decode data to text string
-            words = text.splitlines()  # separate words into list
-            t = 0
-            total = randint(1, 3)  # pick 1 to 3 random words
-            name = choice(words)
-            while t < total:
-                name = name + " " + choice(words)
-                t += 1
-        except urllib.error.URLError as e:
-            print(f"unable to retrieve word list: {e}")
-            name = "untitled - "
-        except Exception as e:
-            print(f"exception occurred trying to retrieve word list: {e}")
-            name = "untitled - "
-        return name
+            text = response.read().decode()
+            words = text.splitlines()
 
-    @staticmethod
-    def new_composer() -> str:
+            word_count = self._randint(1, 3)
+            title_words = [self._choice(words) for _ in range(word_count + 1)]
+            return " ".join(title_words)
+
+        except urllib.error.URLError as e:
+            print(f"Unable to retrieve word list: {e}")
+            return "untitled"
+        except Exception as e:
+            print(f"Exception retrieving word list: {e}")
+            return "untitled"
+
+    def generate_composer(self) -> str:
+        """Generate a random composer name."""
         return get_full_name()
 
-    def init_comp(
-        self, tempo: float = None, title: str = None, composer: str = None
+    def initialize_composition(
+        self,
+        tempo: Optional[float] = None,
+        title: Optional[str] = None,
+        composer: Optional[str] = None,
     ) -> Composition:
         """
-        Initializes a Composition() object by creating
-        the title, composer name, tempo, and file names:
-        (date, midi and txt file names)
+        Initialize a Composition object with title, composer, tempo, and metadata.
 
-        tempo and composer name could also be provided.
+        Args:
+            tempo: Optional tempo in BPM
+            title: Optional composition title
+            composer: Optional composer name
+
+        Returns:
+            Initialized Composition object
         """
         comp = Composition()
 
-        if tempo is None:
-            comp.tempo = self.new_tempo()
-        elif tempo > 40.0 or tempo < 208.0:
-            comp.tempo = tempo
-        else:
-            comp.tempo = 60.0  # erroneous tempo values are replaced with 60bpm
-        if title is None:
-            comp.title = self.new_title()
-        else:
-            comp.title = title
-        if composer is None:
-            comp.composer = self.new_composer()
-        else:
-            comp.composer = composer
-
+        comp.tempo = self._validate_tempo(tempo) if tempo else self.generate_tempo()
+        comp.title = title if title else self.generate_title()
+        comp.composer = composer if composer else self.generate_composer()
         comp.date = date.now().strftime("%d-%b-%y %H:%M:%S")
         comp.midi_file_name = f"{comp.title}.mid"
         comp.txt_file_name = f"{comp.title}.txt"
 
         return comp
 
-    ### TEMPO ###
+    def _validate_tempo(self, tempo: float) -> float:
+        """Validate tempo is within acceptable range."""
+        if 40.0 <= tempo <= 208.0:
+            return tempo
+        return BASE_TEMPO
 
-    @staticmethod
-    def new_tempo() -> float:
+    def generate_tempo(self) -> float:
+        """Generate a random tempo between 40-208 BPM."""
+        return self._choice(TEMPOS)
+
+    def generate_instrument(self) -> str:
+        """Generate a random melodic/harmonic instrument (not percussion)."""
+        return INSTRUMENTS[self._randint(0, MELODIC_INSTRUMENT_END)]
+
+    def generate_instruments(self, total: int) -> List[str]:
         """
-        Picks tempo between 40-208bpm.
+        Generate a list of random instruments.
+
+        Args:
+            total: Number of instruments to generate
+
+        Returns:
+            List of instrument names
         """
-        return choice(TEMPOS)
+        return [self.generate_instrument() for _ in range(total)]
 
-    ### INSTRUMENTS ###
+    def generate_random_note(self) -> str:
+        """Generate a random note between octaves 1 and 7."""
+        pitch_class = self._choice(PITCH_CLASSES)
+        octave = self._randint(1, 7)
+        return f"{pitch_class}{octave}"
 
-    @staticmethod
-    def new_instrument() -> str:
+    def choose_note(self, scale: List[str]) -> str:
+        """Choose a random note from a given scale."""
+        return self._choice(scale)
+
+    def choose_notes(self, source_notes: List[str], total: int) -> List[str]:
         """
-        Randomly picks a melodic/harmonic instrument from a given list. Returns a string.
-        Does NOT pick a percussion instrument!
+        Choose a set of notes at random from a given set.
+
+        Args:
+            source_notes: Source scale to choose from
+            total: Number of notes to choose
+
+        Returns:
+            List of randomly chosen notes
         """
-        return INSTRUMENTS[randint(0, 110)]
+        return [self._choice(source_notes) for _ in range(total)]
 
-    @staticmethod
-    def new_instruments(total: int) -> list[str]:
+    def pick_root(
+        self, transpose: bool = True, octave: Optional[int] = None
+    ) -> Tuple[List[str], str]:
         """
-        Generates a list of instruments of n length, where n is supplied from elsewhere.
-        Returns a list.
+        Pick a randomly chosen and optionally transposed scale or pitch class set.
+
+        Args:
+            transpose: Whether to transpose the root
+            octave: Optional octave to assign
+
+        Returns:
+            Tuple of (note_list, description_string)
         """
-        return [INSTRUMENTS[randint(0, 110)] for inst in range(total)]
+        choice_type = self._randint(1, 3)
 
-    ### PITCH ###
-
-    @staticmethod
-    def rand_note() -> str:
-        """
-        Picks a note at random between octaves 1 and 7.
-        Returns a string representing the note, such as "C#2"
-        """
-        return f"{choice(PITCH_CLASSES)}{randint(1, 7)}"
-
-    @staticmethod
-    def choose_note(scale: list[str]) -> str:
-        """
-        Picks a note at random from a given list of notes
-        """
-        return choice(scale)
-
-    def new_notes(
-        self, data=None, root: list = None, total: int = None
-    ) -> tuple[list, list, list]:
-        """
-        Generates a set of notes to be used as a melody. Can also
-        use a specified root scale, and a specified note total.
-
-        Can also return a list of notes without any input. If this is the case,
-        new_notes() will decide how many to generate (between 3 and 50).
-
-        Data that can be used:
-            A supplied data list (list[int]) of n length functions as *index numbers*
-            against a generated "source scale" to select melody notes.
-
-        User also has the option to supply a "root" scale, though only if the program
-        is accessing this method directly! new_melody() and other methods that call this
-        function don't supply a root if none is chosen by the user.
-
-        Returns a tuple:
-            notes list to be used as a melody (list[str]),
-            note meta data (list[str]),
-            original source scale (list[str])
-        """
-
-        meta_data = []  # save forte numbers and/or pitch class sets
-        octave = randint(2, 3)  # initial starting octave
-        if root is None:
-            root, info = self.pick_root(transpose=True, octave=None)
-            meta_data.append(info)
-        if data is None:
-            if total is None:
-                # Pick total: 10 - 50 if we're generating random notes
-                gen_total = randint(9, 49)
-            else:
-                gen_total = total
-        # Or the largest value of the supplied data set. This will give
-        # us the maximum number of notes we will need to generate and still
-        # have a viable range to choose from -- i.e., if the largest element
-        # in the data set is 100, then we will get a set of 100 notes in our
-        # source scale, so we can map the inputted 100 to the note in the
-        # source scale by treating the data value as an index number.
+        if choice_type == 1:
+            mode, pcs, scale = self.pick_scale(transpose=transpose)
+            info = f"{scale[0]} {mode}"
+        elif choice_type == 2:
+            fn, pcs, scale = self.pick_set(transpose=transpose)
+            info = (
+                f"set {fn} transposed to {scale[0]}"
+                if transpose
+                else f"set {fn} un-transposed {scale[0]}"
+            )
         else:
-            gen_total = max(data) + 1
-
-        # Generate source scale
-        # NOTE: This only uses a supplied root scale once!
-        # After we reach the final octave this will pick another
-        # scale to build off of. May need to parameterize this behavior.
-        n = 0
-        scale = []
-        for _ in range(gen_total):
-            note = f"{root[n]}{octave}"
-            scale.append(note)
-            n += 1
-            if n == len(root):
-                octave += 1
-                if octave > 5:
-                    octave = randint(2, 3)
-                    root, info = self.pick_root(transpose=True, octave=None)
-                    meta_data.append(info)
-                n = 0
-
-        # Randomly pick notes from the generated source
-        # scale to create an arrhythmic melody.
-        notes = []
-        if data is None:
-            # Total notes in melody will be between 3 and
-            # however many notes are in the source scale if no
-            # total value is provided.
-            if total is None:
-                pick_total = randint(3, len(scale))
-            else:
-                pick_total = total
-            notes = [choice(scale) for _ in range(pick_total)]
-        # ...Or pick notes according to integers in data array
-        else:
-            # Map notes to the inputted data to generate a melody.
-            # Total number of notes is equivalent to the
-            # number of elements in the data set. Any supplied
-            # total value won't matter here since we're going of len(data)
-            # for our total because reasons.
-            data_len = len(data)
-            for i in range(data_len):
-                notes.append(scale[data[i]])
-
-        return notes, meta_data, scale
-
-    @staticmethod
-    def choose_notes(source_notes: list, total: int) -> list:
-        """
-        Choose a set (size total) of notes at random from a given set of notes.
-        """
-        return [choice(source_notes) for _ in range(total)]
-
-    def pick_root(self, transpose: bool = True, octave: int = None) -> tuple[list, str]:
-        """
-        Picks a randomly chosen and transposed scale, a 5 to 9
-        note Forte pitch class prime form, or randomly generated scale,
-        each randomly transposed as well.
-
-        Set transpose to false if an non-transposed root scale is preferred.
-        This will default to the starting pitch always being C.
-
-        Returns tuple:
-            list[str] of note name strings (with or without an assigned octave)
-            info (str) about the chosen scale.
-        """
-        # use scale? (1), pcs prime form (2), or invented scale(3)?
-        choice = randint(1, 3)
-        if choice == 1:
-            if transpose:
-                mode, pcs, scale = self.pick_scale(transpose=True)
-                info = f"{scale[0]} {mode}"
-            else:
-                mode, pcs, scale = self.pick_scale(transpose=False)
-                info = f"{scale[0]} {mode}"
-        elif choice == 2:
-            if transpose:
-                fn, pcs, scale = self.pick_set(transpose=True)
-                info = f"set {fn} transposed to {scale[0]}"
-            else:
-                fn, pcs, scale = self.pick_set(transpose=False)
-                info = f"set {fn} un-transposed {scale[0]}"
-        else:
-            if transpose:
-                scale, pcs = self.new_scale(transpose=True)
-                info = f"invented scale: {scale} pcs: {pcs}"
-            else:
-                scale, pcs = self.new_scale(transpose=False)
-                info = f"invented scale: {scale} pcs: {pcs}"
+            scale, pcs = self.generate_scale(transpose=transpose)
+            info = f"invented scale: {scale} pcs: {pcs}"
 
         scale = to_str(pcs=pcs, octave=octave)
         return scale, info
 
     def pick_scale(
-        self, transpose: bool = True, octave: int = None
-    ) -> tuple[str, list[int], list]:
+        self, transpose: bool = True, octave: Optional[int] = None
+    ) -> Tuple[str, List[int], List[str]]:
         """
-        Picks a scale, randomly transposes it (if indicated),
-        and appends a specified octave (if needed).
+        Pick a scale and optionally transpose it.
 
-        Returns a tuple:
-            the scale name (str),
-            un-transposed scale pcs (list[int]),
-            note list (list[str]) *without assigned octave by default.*
+        Args:
+            transpose: Whether to transpose the scale
+            octave: Optional octave to assign
 
-        Supply a value for o if a specified octave is needed.
+        Returns:
+            Tuple of (scale_name, pitch_classes, note_list)
         """
-        scale = choice(list(SCALES.keys()))
-        pcs = SCALES[scale]
+        from core.modify import transpose as transpose_func
+
+        scale_name = self._choice(list(SCALES.keys()))
+        pcs = SCALES[scale_name]
+
         if transpose:
-            pcs_t = self.mod.transpose(pcs, randint(1, 11), oct_eq=False)
+            pcs_t = transpose_func(pcs, self._randint(1, 11), oct_eq=False)
             notes = to_str(pcs_t, octave=octave)
         else:
             notes = to_str(pcs, octave=octave)
-        return scale, pcs, notes
+
+        return scale_name, pcs, notes
 
     def pick_set(
-        self, transpose: bool = True, octave: int = None
-    ) -> tuple[str, list[int], list]:
+        self, transpose: bool = True, octave: Optional[int] = None
+    ) -> Tuple[str, List[int], List[str]]:
         """
-        Selects prime form and transposes a random distance (or not)
+        Select a pitch class set and optionally transpose it.
 
-        Returns a tuple:
-            forte number/fn (str),
-            un-transposed prime form pcs (list[int]),
-            note list (list[str]) *without an assigned octave* by default.
+        Args:
+            transpose: Whether to transpose the set
+            octave: Optional octave to assign
 
-        Supply a value for o if a specified octave is needed.
+        Returns:
+            Tuple of (forte_number, pitch_classes, note_list)
         """
-        forte_number = choice(list(SETS.keys()))
+        from core.modify import transpose as transpose_func
+
+        forte_number = self._choice(list(SETS.keys()))
         pcs = SETS[forte_number]
+
         if transpose:
-            pcs_t = self.mod.transpose(pcs, randint(1, 11), oct_eq=False)
+            pcs_t = transpose_func(pcs, self._randint(1, 11), oct_eq=False)
             scale = to_str(pcs_t, octave=octave)
         else:
             scale = to_str(pcs, octave=octave)
+
         return forte_number, pcs, scale
 
-    def new_scale(
-        self, transpose: bool = True, octave: int = None
-    ) -> tuple[list, list[int]]:
+    def generate_scale(
+        self, transpose: bool = True, octave: Optional[int] = None
+    ) -> Tuple[List[str], List[int]]:
         """
-        Returns a randomly generated 5 to 8 note scale with or without an octave
-        to be used as a 'root'. Can take an int as a starting octave
-        (between 2 and 5), or not.
+        Generate a random 5-8 note scale.
 
-        To be used externally from newNotes() to supply a new "root," as an option
-        for the user.
+        Args:
+            transpose: Whether to transpose the scale
+            octave: Optional octave to assign
 
-        Returns a tuple: notes (list[str]) and the original pitch class set, (list[int]).
+        Returns:
+            Tuple of (note_list, pitch_classes)
         """
+        from core.modify import transpose as transpose_func
+
         pcs = []
-        total = randint(5, 8)
-        """
-        Current approach. Outputs are quite interesting, though I think this
-        is the least efficient way to go about this...
-        """
+        total = self._randint(MIN_SCALE_SIZE, MAX_SCALE_SIZE)
+
         while len(pcs) < total:
-            n = randint(0, 11)
+            n = self._randint(0, 11)
             if n not in pcs:
                 pcs.append(n)
-        # pcs = [randint(0,11) for x in range(total) if x not in pcs]
+
         pcs.sort()
+
         if transpose:
-            pcs = self.mod.transpose(pcs, randint(1, 11), oct_eq=False)
+            pcs = transpose_func(pcs, self._randint(1, 11), oct_eq=False)
+
         scale = to_str(pcs, octave)
         return scale, pcs
 
-    @staticmethod
-    def new_source_scale(root: list[str]) -> list[str]:
+    def generate_source_scale(self, root: List[str]) -> List[str]:
         """
-        Generates a list[str] "source scale" based off a
-        supplied root (list[str]). List should contain
-        strings representing notes without an assigned octave,
-        i.e.: root = ["C", "D", "E", ...]
+        Generate a multi-octave source scale from a root scale.
 
-        Does not pick additional roots! Mostly used by other methods.
+        Args:
+            root: Root scale (note strings without octaves)
 
-        Returns a list[str] with appended octaves (2-6)
+        Returns:
+            List of notes with octaves (2-6)
         """
-        n = 0
-        o = 2
         scale = []
+        n = 0
+        octave = GENERATION_OCTAVE_START
+
         for _ in range(28):
-            scale.append(f"{root[n]}{o}")
+            scale.append(f"{root[n]}{octave}")
             n += 1
             if n == len(root):
-                o += 1
-                if o == 6:
-                    o = 2
+                octave += 1
+                if octave == 6:
+                    octave = GENERATION_OCTAVE_START
                 n = 0
+
         return scale
 
-    def new_source_scales(self, total: bool = None) -> tuple[dict, list]:
+    def generate_source_scales(
+        self, total: Optional[int] = None
+    ) -> Tuple[Dict[int, List[str]], List[str]]:
         """
-        generates a dictionary of source scales to choose from.
+        Generate a dictionary of source scales.
 
-        returns a tuple:
-            sources (dict[int, list[str]])
-            scale_info (list[str])
+        Args:
+            total: Optional number of scales to generate
+
+        Returns:
+            Tuple of (scales_dict, scale_info_list)
         """
         if total is None:
-            total = randint(3, 8)  # pick 3-8 scales if no total is provided
+            total = self._get_default_count(MIN_SCALES, MAX_SCALES)
 
         sources = {}
         scale_info = []
-        for scale in range(total):
+
+        for i in range(total):
             root, info = self.pick_root()
             scale_info.append(info)
-            sources[scale] = self.new_source_scale(root)
+            sources[i] = self.generate_source_scale(root)
 
         return sources, scale_info
 
-    @staticmethod
-    def derive_scales(pcs: list, octave: int = None) -> dict:
+    def generate_notes(
+        self,
+        data: Optional[List] = None,
+        root: Optional[List[str]] = None,
+        total: Optional[int] = None,
+    ) -> NoteGenerationResult:
+        """
+        Generate a set of notes for a melody.
+
+        Args:
+            data: Optional data list to map to notes
+            root: Optional root scale to use
+            total: Optional number of notes to generate
+
+        Returns:
+            NoteGenerationResult containing notes, metadata, and source notes
+        """
+        meta_data = []
+        octave = self._randint(GENERATION_OCTAVE_START, 3)
+
+        if root is None:
+            root, info = self.pick_root(transpose=True, octave=None)
+            meta_data.append(info)
+
+        if data is None:
+            gen_total = (
+                total
+                if total
+                else self._get_default_count(MIN_NOTES - 1, MAX_NOTES - 1)
+            )
+        else:
+            gen_total = max(data) + 1
+
+        scale = self._build_source_scale(root, gen_total, octave, meta_data)
+        notes = self._select_notes_from_scale(scale, data, total)
+
+        return NoteGenerationResult(notes, meta_data, scale)
+
+    def _build_source_scale(
+        self, root: List[str], gen_total: int, octave: int, meta_data: List[str]
+    ) -> List[str]:
+        """Build a source scale for note generation."""
+        scale = []
+        n = 0
+
+        for _ in range(gen_total):
+            note = f"{root[n]}{octave}"
+            scale.append(note)
+            n += 1
+
+            if n == len(root):
+                octave += 1
+                if octave > 5:
+                    octave = self._randint(GENERATION_OCTAVE_START, 3)
+                    root, info = self.pick_root(transpose=True, octave=None)
+                    meta_data.append(info)
+                n = 0
+
+        return scale
+
+    def _select_notes_from_scale(
+        self, scale: List[str], data: Optional[List], total: Optional[int]
+    ) -> List[str]:
+        """Select notes from the source scale."""
+        if data is None:
+            pick_total = total if total else self._randint(3, len(scale))
+            return [self._choice(scale) for _ in range(pick_total)]
+        else:
+            return [scale[i] for i in data]
+
+    def derive_scales(
+        self, pcs: List[int], octave: Optional[int] = None
+    ) -> Dict[int, List[str]]:
         """
         Generate derivative scales based on each note in a given scale.
-        Requires a pitch class set (pcs) list[int] who's values are
-        between 0 - 11, and returns a dictionary of variant scales (list[str])
 
-        Each variant scale will have an assigned octave, with or without
-        user input.
+        Args:
+            pcs: Pitch class set
+            octave: Optional octave to assign
 
-        1. Start with first note in pitch class set (pcs).
-
-        2. Derive each subsequent note by adding a randomly
-           chosen value to the sum of the previous
-
-           n0+=rand(1,3), n1 = n0+=rand(1,3), n2 = n1+=rand(1,3), etc...
-
-        3. Repeat step 2 with next note in supplied pcs up to end of scale.
+        Returns:
+            Dictionary of variant scales
         """
         variants = {}
-        pcs_len = len(pcs)
-        for i in range(pcs_len):
+
+        for i, pc in enumerate(pcs):
             scale_variant = []
-            note = pcs[i]
-            while len(scale_variant) < pcs_len:
-                note += randint(1, 3)
+            note = pc
+            while len(scale_variant) < len(pcs):
+                note += self._randint(1, 3)
                 scale_variant.append(note)
             variants[i] = scale_variant
 
-        for scale in variants:
-            variants[scale] = to_str(variants[scale], octave=octave, oct_eq=False)
+        for key in variants:
+            variants[key] = to_str(variants[key], octave=octave, oct_eq=False)
 
         return variants
 
-    @staticmethod
-    def pick_arp(key: str) -> list[int]:
+    def pick_arpeggio(self, key: str) -> List[int]:
         """
-        Returns a list[int] of pitch classes outlining a one-octave
-        arpeggio.
+        Get pitch classes outlining a one-octave arpeggio.
+
+        Args:
+            key: Arpeggio type key
+
+        Returns:
+            List of pitch class integers
+
+        Raises:
+            ValueError: If key is invalid
         """
-        if key in ARPEGGIOS.keys():
-            return ARPEGGIOS[key]
-        else:
+        if key not in ARPEGGIOS:
             raise ValueError(
-                f"{key} is not a valid parameter. "
-                f"available parameters: {list(ARPEGGIOS.keys())}"
+                f"'{key}' is not valid. Available: {list(ARPEGGIOS.keys())}"
             )
+        return ARPEGGIOS[key]
 
-    @staticmethod
-    def new_12tone_row() -> list[str]:
-        """
-        Generates a 12-tone row. Returns a note list[str].
-        Notes don't have an assigned octave.
-        """
-        return sample(PITCH_CLASSES, len(PITCH_CLASSES))
+    def generate_12tone_row(self) -> List[str]:
+        """Generate a 12-tone row."""
+        return self.random.sample(PITCH_CLASSES, len(PITCH_CLASSES))
 
-    @staticmethod
-    def new_12tone_intervals() -> list:
-        """
-        Returns a list of 11 non-repeating intervals to generate 12-tone row
-        transpositions.
-        """
-        return sample(INTERVALS["Chromatic Scale"], len(INTERVALS["Chromatic Scale"]))
+    def generate_12tone_intervals(self) -> List[int]:
+        """Generate 11 non-repeating intervals for 12-tone row transpositions."""
+        chromatic = list(range(1, 12))
+        return self.random.sample(chromatic, len(chromatic))
 
-    @staticmethod
-    def new_palindrome(melody) -> Melody:
+    def create_palindrome(
+        self, melody: Union[Melody, List[Chord]]
+    ) -> Union[Melody, List[Chord]]:
         """
-        Takes either a list of chord() objects or a single melody()
-        object, and creates a palindrome from it.
+        Create a palindrome from a melody or chord list.
 
-        Returns either a modified list[chord()], or modified melody()
+        Args:
+            melody: Melody object or list of Chord objects
+
+        Returns:
+            Modified melody or chord list as palindrome
         """
-        # chord() list
-        if type(melody) == list:
-            mel_rev = melody
-            mel_rev.reverse()
-            melody.extend(mel_rev)
-        # melody() object
+        if isinstance(melody, list):
+            return melody + list(reversed(melody))
         elif isinstance(melody, Melody):
-            melody.notes.extend(melody.notes.reverse())
-            melody.rhythms.extend(melody.rhythms.reverse())
-            melody.dynamics.extend(melody.dynamics.reverse())
+            melody.notes = melody.notes + list(reversed(melody.notes))
+            melody.rhythms = melody.rhythms + list(reversed(melody.rhythms))
+            melody.dynamics = melody.dynamics + list(reversed(melody.dynamics))
+            return melody
         else:
-            raise TypeError(
-                "parameter must be either a list or Melody() object"
-                f"param was type: {type(melody)}"
-            )
-        return melody
+            raise TypeError(f"Must be Melody or list. Got: {type(melody)}")
 
-    ### RHYTHM ###
+    def generate_rhythm(self) -> float:
+        """Generate a single rhythm (not scaled to tempo)."""
+        return self._choice(RHYTHMS)
 
-    @staticmethod
-    def new_rhythm() -> float:
+    def generate_rhythms(
+        self,
+        total: Optional[int] = None,
+        tempo: Optional[float] = None,
+        source_rhythms: Optional[List[float]] = None,
+    ) -> List[float]:
         """
-        Generates a single new rhythm. Not scaled to tempo!
+        Generate a series of rhythms.
+
+        Args:
+            total: Optional number of rhythms to generate
+            tempo: Optional tempo to scale to
+            source_rhythms: Optional source rhythms to choose from
+
+        Returns:
+            List of rhythm values (in seconds if tempo provided)
         """
-        return choice(RHYTHMS)
-
-    def new_rhythms(
-        self, total: int = None, tempo: float = None, source_rhythms: list = None
-    ):
-        """
-        Generates a series of rhythms of n length, where n is supplied
-        from elsewhere. Can also decide to pick 3 and 30 rhythms
-        if no desired total is supplied. Will convert raw rhythm values
-        to a given tempo, if provided. Otherwise, it'll just return an
-        unaltered float list.
-
-        Can also use a set of source_rhythms to choose from. If left empty (which is the default),
-        then new_rhythms will choose from the default set of available rhythms.
-
-        Uses infrequent and randomized repetitions.
-
-        NOTE: Supply a smaller value for 'total' if a shorter pattern
-              is needed. 'total' can be used to sync up with a given list or
-              be hard-coded.
-        """
-        rhythms = []
         if total is None:
-            total = randint(3, 30)
-        if source_rhythms:
-            _rhythms = source_rhythms
-        else:
-            _rhythms = RHYTHMS
+            total = self._get_default_count(MIN_RHYTHMS, MAX_RHYTHMS)
 
-        # generate rhythms
+        rhythms_source = source_rhythms if source_rhythms else RHYTHMS
+        rhythms = []
+
         while len(rhythms) < total:
-            rhythm = choice(_rhythms)  # Pick rhythm and add to list
-            if randint(1, 2) == 1:  # Repeat this rhythm or not?
-                limit = self._rep_limit(total)
-                total_reps = randint(1, limit)
+            rhythm = self._choice(rhythms_source)
+
+            if self._randint(1, 2) == 1:
+                limit = self._get_repetition_limit(total)
+                total_reps = self._randint(1, limit)
                 for _ in range(total_reps):
                     rhythms.append(rhythm)
                     if len(rhythms) == total:
@@ -548,467 +548,337 @@ class Generate:
             else:
                 rhythms.append(rhythm)
 
-        # scale to given tempo if provided.
-        if tempo is not None and tempo != 60.0:
+        if tempo is not None and tempo != BASE_TEMPO:
             rhythms = scale_to_tempo(tempo, rhythms)
 
         return rhythms
 
-    @staticmethod
-    def _rep_limit(total: int):
-        limit = scale_limit(total)  # TODO: revisit this
-        if limit == 0:
-            limit += 2
-        return limit
+    def _get_repetition_limit(self, total: int) -> int:
+        """Calculate repetition limit based on total items."""
+        limit = scale_limit(total)
+        return max(limit, 2)
 
-    ### DYNAMICS ###
+    def generate_dynamic(self, allow_rests: bool = True) -> int:
+        """
+        Generate a single dynamic/velocity.
 
-    @staticmethod
-    def new_dynamic(rests: bool = True) -> int:
-        """
-        Generates a single dynamic/velocity between 20 - 124
-        OR a single rest!
-        """
-        if rests:
-            return choice(DYNAMICS) if randint(0, 1) == 1 else REST
-        else:
-            return choice(DYNAMICS)
+        Args:
+            allow_rests: Whether to allow rest (velocity 0)
 
-    @staticmethod
-    def _new_dynamics_with_silences(total_dynamics: int, dynamics: list):
+        Returns:
+            MIDI velocity value
         """
-        Creates a list of dynamic/velocities with optional silences.
-        Will also randomly repeat a dynamic n times.
-        """
-        while len(dynamics) < total_dynamics:
-            if randint(0, 1) == 1:  # Pick dynamic OR a rest
-                dynamic = choice(DYNAMICS)
-                if randint(1, 2) == 1:  # repeat?
-                    # scale total reps with regards to the total number of dynamic/velocities we have
-                    # we want to avoid repeating the dynamic/velocities *too* many times, so we try to
-                    # repeat something with a "sane" number of repetiions -- i.e., doesn't dominate the
-                    # entire set of dyanmics.
-                    rep_limit = scale_limit(total_dynamics)
-                    if rep_limit == 0:
-                        rep_limit += 2
-                    total_reps = randint(1, rep_limit)
-                    for _ in range(total_reps):
-                        dynamics.append(dynamic)
-                        if len(dynamics) == total_dynamics:
-                            break
-                else:
-                    dynamics.append(dynamic)
-            else:
-                dynamic = REST
-                if randint(1, 2) == 1:  # repeat?
-                    total_reps = randint(1, 2)  # only repeat rests 1-2 times for now...
-                    for _ in range(total_reps):
-                        dynamics.append(dynamic)
-                        if len(dynamics) == total_dynamics:
-                            break
-                else:
-                    dynamics.append(dynamic)
+        if allow_rests and self._randint(0, 1) == 1:
+            return REST
+        return self._choice(DYNAMICS)
 
-        return dynamics
+    def generate_dynamics(
+        self, total: Optional[int] = None, allow_rests: bool = True
+    ) -> List[int]:
+        """
+        Generate a list of dynamics.
 
-    @staticmethod
-    def _new_dynamics(total_dynamics: int, dynamics: list) -> list:
+        Args:
+            total: Optional number of dynamics to generate
+            allow_rests: Whether to allow rests
+
+        Returns:
+            List of MIDI velocity values
         """
-        Generates a list of dynamics without silences(rests)
-        """
-        while len(dynamics) < total_dynamics:
-            dynamic = choice(DYNAMICS)
-            if randint(1, 2) == 1:  # repeat?
-                # scale total reps with regards to the total number of dynamic/velocities we have
-                # we want to avoid repeating the dynamic/velocities *too* many times, so we try to
-                # repeat something with a "sane" number of repetiions -- i.e., doesn't dominate the
-                # entire set of dyanmics.
-                rep_limit = scale_limit(total_dynamics)
-                if rep_limit == 0:
-                    rep_limit += 2
-                total_reps = randint(1, rep_limit)
+        if total is None:
+            total = self._get_default_count(MIN_DYNAMICS, MAX_DYNAMICS)
+
+        dynamics = []
+
+        while len(dynamics) < total:
+            dynamic = self.generate_dynamic(allow_rests=allow_rests)
+
+            if self._randint(1, 2) == 1:
+                limit = self._get_repetition_limit(total)
+                total_reps = self._randint(1, limit if dynamic != REST else 2)
                 for _ in range(total_reps):
                     dynamics.append(dynamic)
-                    if len(dynamics) == total_dynamics:
+                    if len(dynamics) == total:
                         break
             else:
                 dynamics.append(dynamic)
 
         return dynamics
 
-    def new_dynamics(self, total: int = None, rests: bool = True) -> list[int]:
-        """
-        Generates a list of dynamics (MIDI velocities) of n length,
-        where n is supplied from elsewhere. Uses infrequent repetition.
-        Can also pick between 3 and 30 rhythms if no total is supplied.
-
-        Randomly selects REST to insert a rest into a composition.
-
-        Uses infrequent repetition.
-
-        NOTE: Supply a smaller value for 'total' if a shorter pattern
-              is needed. 'total' can be used to sync up with a given list or
-              be hard-coded.
-        """
-        if total is None:
-            total = randint(3, 30)
-        if rests:
-            return self._new_dynamics_with_silences(total, [])
-        else:
-            return self._new_dynamics(total, [])
-
-    ### CHORDS ###
-
-    @staticmethod
-    def display_chord(chord: Chord) -> None:
-        output = (
-            f"\n------------Chord:-------------"
-            f"\nnotes: {chord.notes}"
-            f"\nrhythm: {chord.rhythm}"
-            f"\ndynamic: {chord.dynamic}"
-        )
-        print(output)
-
-    def display_chords(self, chords: list) -> None:
-        print("\n----------------HARMONY INFO:-------------------")
-        chord_len = len(chords)
-        for i in range(chord_len):
-            print("\n", i + 1, ": ", "Notes:", chords[i].notes)
-            self.display_chord(chords[i])
-
-    @staticmethod
-    def get_chord_durations(chords: list) -> float:
-        """
-        Returns the total length  in seconds (float) of a series
-        of chord() objects (chord progression).
-        """
-        duration = 0.0
-        chord_len = len(chords)
-        for chord in range(chord_len):
-            duration += chords[chord].rhythm
-        return duration
-
-    def new_chord(
-        self, tempo: float = None, scale: list = None, asyn: bool = True
+    def generate_chord(
+        self,
+        tempo: Optional[float] = None,
+        scale: Optional[List[str]] = None,
+        include_rhythm: bool = True,
     ) -> Chord:
         """
-        Generates a 2-9 note chord with randomly chosen notes from either a supplied
-        scale or self-selected or generated one.
+        Generate a 2-9 note chord.
 
-        If asyn is True, the chord will also have its rhythm and dynamic randomly chosen.
-        asyn is True by default.
+        Args:
+            tempo: Optional tempo
+            scale: Optional scale to choose notes from
+            include_rhythm: Whether to include rhythm and dynamic
 
-        Returns a chord() object. Does not assign an instrument!
+        Returns:
+            Chord object
         """
-        new_chord = Chord()
-        if tempo is None:
-            new_chord.tempo = 60.0
-        else:
-            new_chord.tempo = tempo
+        chord = Chord()
+        chord.tempo = tempo if tempo else BASE_TEMPO
+
         if scale is None:
-            # pick an existing scale/set or make a new one?
-            if randint(1, 2) == 1:
-                new_chord.source_notes, new_chord.info = self.pick_root(
-                    octave=randint(2, 5)
+            if self._randint(1, 2) == 1:
+                chord.source_notes, chord.info = self.pick_root(
+                    octave=self._randint(MIN_OCTAVE, MAX_OCTAVE)
                 )
-                new_chord.pcs = "None"
+                chord.pcs = []
             else:
-                new_chord.source_notes, new_chord.pcs = self.new_scale(
-                    octave=randint(2, 5)
+                chord.source_notes, chord.pcs = self.generate_scale(
+                    octave=self._randint(MIN_OCTAVE, MAX_OCTAVE)
                 )
-                new_chord.info = "Invented Scale"
+                chord.info = "Invented Scale"
         else:
-            new_chord.source_notes = scale
+            chord.source_notes = scale
 
-        # pick notes
-        total = randint(2, 9)
-        new_chord.notes = [choice(scale) for _ in range(total)]
+        total_notes = self._randint(MIN_CHORD_NOTES, MAX_CHORD_NOTES)
+        chord.notes = [self._choice(chord.source_notes) for _ in range(total_notes)]
 
-        # only add randomized rhythm and dynamics if specified.
-        # chords can just be a set of notes and the other parameters can be
-        # handled externally.
-        if asyn:
-            rhythm = self.new_rhythm()
-            if new_chord.tempo != 60:
-                rhythm = scale_to_tempo(new_chord.tempo, rhythm)
-            new_chord.rhythm = rhythm
-            new_chord.dynamic = self.new_dynamic(rests=False)
+        if include_rhythm:
+            rhythm = self.generate_rhythm()
+            if chord.tempo != BASE_TEMPO:
+                rhythm = scale_to_tempo(chord.tempo, rhythm)
+            chord.rhythm = rhythm
+            chord.dynamic = self.generate_dynamic(allow_rests=False)
 
-        return new_chord
+        return chord
 
-    def new_chords(
-        self, total: int = None, tempo: float = None, scale: list = None
-    ) -> list[Chord]:
+    def generate_chords(
+        self,
+        total: Optional[int] = None,
+        tempo: Optional[float] = None,
+        scale: Optional[List[str]] = None,
+    ) -> List[Chord]:
         """
-        Generates a progression from the notes of a given scale.
-        Returns a list of chord() objects (5-11 if no total is
-        supplied). Each chord will have 2 to 9 notes in various
-        registers, as well as a unique dynamic and rhythm.
+        Generate a chord progression.
 
-        chord() objects *wont* have assigned instruments!
+        Args:
+            total: Optional number of chords to generate
+            tempo: Optional tempo
+            scale: Optional scale to derive chords from
 
-        NOTE: Chords will be derived from the given scale ONLY!
-              Could possibly add more randomly inserted chromatic
-              tones to give progressions more variance and color.
+        Returns:
+            List of Chord objects
         """
-        chords = []
         if total is None:
-            total = randint(5, 11)
+            total = self._get_default_count(MIN_CHORDS, MAX_CHORDS)
+
         if tempo is None:
-            tempo = self.new_tempo()
+            tempo = self.generate_tempo()
+
         if scale is None:
-            scale = self.new_notes()[0]
-        for _ in range(total):
-            new_chord = self.new_chord(tempo, scale)
-            chords.append(new_chord)
-        return chords
+            note_result = self.generate_notes()
+            scale = note_result.notes
 
-    @staticmethod
-    def new_triads(scale: list, total: int) -> list[Chord]:
+        return [self.generate_chord(tempo, scale) for _ in range(total)]
+
+    def generate_triads(self, scale: List[str], total: int) -> List[Chord]:
         """
-        generates a list of triads of t length from a given multi-octave
-        source scale. a single octave scale will only yield 3 triads since
-        the third chord will pick the last element in the list.
+        Generate triads from a given multi-octave source scale.
 
-        ideally a list[str] of note chars in at least two octaves will
-        be supplied.
+        Args:
+            scale: Multi-octave source scale
+            total: Number of triads to generate
 
-        Pick notes by accessing every other index three times.
-
-        returns a list of chord() objects. if t is not supplied, then
-        it will generate as many chords as it can until an IndexError
-        exception is raised.
-
-        NOTE: chords don't have tempo or instrument assigned!
+        Returns:
+            List of Chord objects representing triads
         """
         triads = []
-        scale_len = len(scale)
-        for i in range(4, scale_len):
+
+        for i in range(4, len(scale)):
             triad = Chord()
             triad.notes = [scale[i - 4], scale[i - 2], scale[i]]
-            triad.rhythm = 2.0  # half note by default
-            triad.dynamic = 100  # mezzo-forte-ish
+            triad.rhythm = 2.0
+            triad.dynamic = 100
             triads.append(triad)
+
             if len(triads) == total:
                 break
 
         return triads
 
-    @staticmethod
-    def new_sym_triad(root: str, interval: int, n: int) -> list:
+    def generate_symmetric_triad(self, root: int, interval: int, n: int) -> List[int]:
         """
-        generates an intervallicly symmetrical chord of n length
-        based off a given root (r) and interval (i).
+        Generate an intervallically symmetrical chord.
 
-        returns a list[int] between 0 - 11 of n length.
+        Args:
+            root: Root pitch class (0-11)
+            interval: Interval distance (1-6)
+            n: Number of notes in chord
 
-        Returns -1 if given interval is invalid.
+        Returns:
+            List of pitch class integers
+
+        Raises:
+            ValueError: If interval is out of valid range
         """
-        if interval > 6 or interval < 1:
+        if not (1 <= interval <= 6):
             raise ValueError("Interval must be between 1 and 6")
-        if root > 11 or root < 0:
+
+        from utils.tools import oct_equiv
+
+        if not (0 <= root <= 11):
             root = oct_equiv(root)
+
         chord = []
+        current = root
+
         while len(chord) < n:
-            chord.append(root)
-            root += interval
-            if root > 11:
-                root = oct_equiv(root)
+            chord.append(current)
+            current += interval
+            if current > 11:
+                current = oct_equiv(current)
+
         return chord
 
-    ### MELODIES ###
-
-    @staticmethod
-    def display_melody(m: Melody) -> None:
-        """
-        Displays melody() object data
-        """
-        output = (
-            f"\n-----------MELODY Info------------"
-            f"\nTempo: {m.tempo} bpm"
-            f"\nInstrument: {m.instrument}"
-            f"\nPitch Classes: {m.pcs}"
-            f"\nSource Data: {m.source_data}"
-            f"\nInfo: {m.info}"
-            f"\nTotal Notes: {len(m.notes)}"
-            f"\nNotes: {m.notes}"
-            f"\nTotal rhythms: {len(m.rhythms)}"
-            f"\nRhythms: {m.rhythms}"
-            f"\nTotal Dynamics: {len(m.dynamics)}"
-            f"\nDynamics: {m.dynamics}"
-        )
-        print(output)
-
-    def new_melody(
+    def generate_melody(
         self,
-        tempo: float = None,
-        raw_data=None,
-        data_type: int = None,
-        total: int = None,
-        inst_range: bool = None,
-        rests: bool = True,
+        tempo: Optional[float] = None,
+        raw_data: Optional[List] = None,
+        data_type: Optional[str] = None,
+        total: Optional[int] = None,
+        inst_range: Optional[List[str]] = None,
+        allow_rests: bool = True,
     ) -> Melody:
         """
-        Picks tempo, notes, rhythms, and dynamics, with or without a
-        supplied list from the user. It can process a list of ints
-        (dt == 1), floats(2), single char strings/letters(3),
-        or a hex number, represented as a single string(4)
+        Generate a melody with notes, rhythms, and dynamics.
 
-        if data is supplied, then adding a value for t will be redundant
-        since this just goes off the total elements in the data list.
+        Args:
+            tempo: Optional tempo in BPM
+            raw_data: Optional data to map to notes
+            data_type: Type of data ('int', 'float', 'chars', 'hex')
+            total: Optional number of notes to generate
+            inst_range: Optional instrument range to constrain notes
+            allow_rests: Whether to allow rests in dynamics
 
-        If no data is supplied, then it will generate a melody anyway.
-
-        Returns a melody() object
-
-        NOTE: Instrument is *NOT* picked! Needs to be supplied externally.
+        Returns:
+            Melody object (instrument NOT assigned)
         """
         melody = Melody()
 
-        # Process any incoming data
+        processed_data = None
         if data_type is not None and raw_data is not None:
-            source_data = raw_data
-            melody.source_data = source_data
+            melody.source_data = raw_data
             processed_data = map_data(raw_data, data_type)
         else:
-            melody.source_data = "None"
-        # Set tempo
-        if tempo is None:
-            melody.tempo = self.new_tempo()
-        else:
-            melody.tempo = tempo
+            melody.source_data = []
 
-        # Pick notes from scratch
+        melody.tempo = tempo if tempo else self.generate_tempo()
+
         if raw_data is None:
-            if total is None:
-                (melody.notes, melody.info, melody.source_notes) = self.new_notes()
-            else:
-                (melody.notes, melody.info, melody.source_notes) = self.new_notes(
-                    total=total
-                )
-        # Or use supplied data. Supplied total isn't applicable with
-        # a data set of n size, since n will just become the total we work with.
+            result = self.generate_notes(total=total)
         else:
-            (melody.notes, melody.info, melody.source_notes) = self.new_notes(
-                data=processed_data
-            )
+            result = self.generate_notes(data=processed_data)
 
-        # remove any notes not within a supplied range (if available)
+        melody.notes = result.notes
+        melody.info = result.meta_data
+        melody.source_notes = result.source_notes
+
         if inst_range is not None:
-            melody_len = len(melody.notes)
-            for note in range(melody_len):
-                if melody.notes[note] not in inst_range:
-                    melody.notes.remove(melody.notes[note])
+            melody.notes = [note for note in melody.notes if note in inst_range]
 
-        # add rhythms and dynamics
-        melody.rhythms = self.new_rhythms(len(melody.notes), melody.tempo)
-        melody.dynamics = self.new_dynamics(len(melody.notes), rests)
+        melody.rhythms = self.generate_rhythms(len(melody.notes), melody.tempo)
+        melody.dynamics = self.generate_dynamics(len(melody.notes), allow_rests)
 
         return melody
 
     def write_string_line(
-        self, part: Melody, scale: list, total: int, asyn: bool = False
+        self, part: Melody, scale: List[str], total: int, include_rhythm: bool = False
     ) -> Melody:
         """
-        writes a melodic line for a string instrument (violin, viola, cello, or bass TBD)
+        Write a melodic line for a string instrument.
 
-        **doesn't add rhythm or dynamics** if asyn==False,
-        which it is by default. if asyn==true, then any supplied
-        total will be overwritten! still working on that
-        quirk...
+        Args:
+            part: Melody object with instrument assigned
+            scale: Source scale to choose notes from
+            total: Number of notes to add
+            include_rhythm: Whether to add independent rhythms and dynamics
 
-        returns a modified Melody() object
+        Returns:
+            Modified Melody object
+
+        Raises:
+            ValueError: If instrument is not a string instrument
         """
-        if part.instrument not in ["Violin", "Viola", "Cello", "Contrabass"]:
-            raise ValueError("melody object must be assigned a string instrument")
+        valid_instruments = ["Violin", "Viola", "Cello", "Contrabass"]
+        if part.instrument not in valid_instruments:
+            raise ValueError(f"Instrument must be one of {valid_instruments}")
 
-        if asyn:
-            # NOTE: this will redefine supplied total if asyn is True
-            total = randint(12, 30)
+        if include_rhythm:
+            total = self._randint(12, 30)
 
-        for _ in range(total):
-            # limited to octaves 4 and 5 for violins
-            if part.instrument == "Violin":
-                note = scale[randint(13, len(scale) - 1)]
-                while note not in RANGE["Violin"]:
-                    note = scale[randint(13, len(scale) - 1)]
+        octave_ranges = {
+            "Violin": (13, len(scale) - 1, "Violin"),
+            "Viola": (7, len(scale) - 8, "Viola"),
+            "Cello": (0, len(scale) - 16, "Cello"),
+        }
+
+        if part.instrument in octave_ranges:
+            min_idx, max_idx, inst_name = octave_ranges[part.instrument]
+            for _ in range(total):
+                note = scale[self._randint(min_idx, max_idx)]
+                while note not in RANGE[inst_name]:
+                    note = scale[self._randint(min_idx, max_idx)]
                 part.notes.append(note)
 
-            # limit to octaves 3 and 4 for viola
-            elif part.instrument == "Viola":
-                note = scale[randint(7, len(scale) - 8)]
-                while note not in RANGE["Viola"]:
-                    note = scale[randint(7, len(scale) - 8)]
-                part.notes.append(note)
-
-            # limit to octaves 2 and 3 for cello
-            elif part.instrument == "Cello":
-                note = scale[randint(0, len(scale) - 16)]
-                while note not in RANGE["Cello"]:
-                    note = scale[randint(0, len(scale) - 16)]
-                part.notes.append(note)
-
-        if asyn:
-            # add independent rhythms and dynamics of n length
+        if include_rhythm:
             part.rhythms.extend(
-                self.new_rhythms(total=len(part.notes), tempo=part.tempo)
+                self.generate_rhythms(total=len(part.notes), tempo=part.tempo)
             )
-            part.dynamics.extend(self.new_dynamics(total=len(part.notes)))
+            part.dynamics.extend(self.generate_dynamics(total=len(part.notes)))
 
         return part
 
-    ### NEW COMPOSITION ###
-
-    def new_composition(self, data=None, data_type=None) -> Composition:
+    def generate_composition(
+        self, data: Optional[List] = None, data_type: Optional[str] = None
+    ) -> Composition:
         """
-        Generates 1 melody and set of harmonies with our without
-        inputted data.
+        Generate a complete composition with melody and harmonies.
 
-        Takes a 0x-xxxxxx hex humber representing a color, or
-        an array of ints, floats or chars of any length as arguments,
-        plus the data type represented by an int
-        (int (1), float (2), char (3), or hex number (4)).
+        Args:
+            data: Optional data to map to melody
+            data_type: Type of data if provided
 
-        Outputs a a MIDI file, a .txt file with the compositions' data (title, instrumentation,
-        notes, etc...).
-
-        Returns a composition() object on success, or -1 on failure.
+        Returns:
+            Complete Composition object with MIDI file exported
         """
-        comp = self.init_comp()
+        comp = self.initialize_composition()
         comp.ensemble = "duet"
 
-        # Generate a melody only if we have both data and data_type args
         if data is not None and data_type is not None:
-            melody = self.new_melody(
+            melody = self.generate_melody(
                 tempo=comp.tempo, raw_data=data, data_type=data_type
             )
         else:
-            melody = self.new_melody(tempo=comp.tempo)
-        # Pick instrument
-        melody.instrument = self.new_instrument()
-        # Save melody info
+            melody = self.generate_melody(tempo=comp.tempo)
+
+        melody.instrument = self.generate_instrument()
         comp.add_part(melody, melody.instrument)
 
-        # Generate harmonies from this melody.
-        # Total is between half the number of notes
-        # in the melody and total num of notes.
-        chords = self.new_chords(
-            total=randint(floor(len(melody.notes) / 2), len(melody.notes)),
-            tempo=comp.tempo,
-            scale=melody.notes,
+        chord_total = self._randint(floor(len(melody.notes) / 2), len(melody.notes))
+        chords = self.generate_chords(
+            total=chord_total, tempo=comp.tempo, scale=melody.notes
         )
-        # Pick keyboard instrument and apply to all chord objects
-        instr = INSTRUMENTS[randint(0, 8)]
-        for i in range(len(chords)):
-            chords[i].instrument = instr
 
-        # Save chord object list
-        comp.add_part(chords, instr)
+        keyboard_instrument = INSTRUMENTS[
+            self._randint(KEYBOARD_INSTRUMENT_START, KEYBOARD_INSTRUMENT_END)
+        ]
 
-        # Add title and write out MIDI
+        for chord in chords:
+            chord.instrument = keyboard_instrument
+
+        comp.add_part(chords, keyboard_instrument)
         comp.title = f"{comp.title} for mixed duet"
-        export_midi(comp)
 
-        # display final info
+        export_midi(comp)
         comp.display()
+
         return comp
