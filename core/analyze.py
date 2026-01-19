@@ -1,6 +1,5 @@
 """
-this module handles the analysis of composition() objects and
-MIDI files.
+This module handles the analysis of composition() objects and MIDI files.
 
 TODO:
     convert MIDI file data to composition() object, as best as possible.
@@ -23,419 +22,244 @@ TODO:
 TODO: generate spectrogram of a given audio file
 """
 
-from core.constants import NOTES, PITCH_CLASSES, RHYTHMS, BEATS, RANGE, SCALES, SETS
-from core.modify import Modify
+from __future__ import annotations
+from typing import Dict, List, Union
+
+from core.constants import NOTES, PITCH_CLASSES, BEATS
 from containers.composition import Composition
 from containers.melody import Melody
 from containers.chord import Chord
-from utils.midi import (
-    load_midi_file,
-    export_midi,
-    parse_midi,
-    tempo2bpm,
-    MIDI_num_to_note_name,
-)
-
-from utils.tools import remove_oct, oct_equiv, scale_to_tempo, all_same, to_str
+from utils.midi import tempo2bpm, MIDI_num_to_note_name, parse_midi
+from utils.tools import remove_oct
 
 
-class Analyze:
+def get_pcs(notes: Union[str, List[str]]) -> Union[int, List[int]]:
     """
-    class of analysis functions to be used with composition() and MidiFile()
-    objects.
+    Match pitch strings to pitch class integers.
+
+    Args:
+        notes: Either a single note string or list of note strings
+
+    Returns:
+        Corresponding pitch class integer(s) in original order
     """
+    if isinstance(notes, str):
+        note = remove_oct(notes) if not notes.isalpha() else notes
+        return PITCH_CLASSES.index(note)
+    elif isinstance(notes, list):
+        pcs = []
+        for note_str in notes:
+            note = remove_oct(note_str) if not note_str.isalpha() else note_str
+            pcs.append(PITCH_CLASSES.index(note))
+        return pcs
+    else:
+        raise TypeError(f"Notes must be a str or list[str]. Got: {type(notes)}")
 
-    def __init__(self) -> None:
-        self.going = True
 
-    ### Pitch Class Methods ###
+def get_index(notes: Union[str, List[str]]) -> Union[int, List[int]]:
+    """
+    Get the index or list of indices of given notes in NOTES.
 
-    @staticmethod
-    def get_pcs(notes):
-        """
-        matches pitch strings to pitch class integers.
+    Note name string must have an assigned octave between 0-8.
 
-        returns the corresponding pcs list[int]. list is unsorted, that is,
-        it's in the original order of the elements in the submitted notes list
-        """
-        if type(notes) == str:
-            # check if there's an octave int present
-            if not notes.isalpha():
-                note = remove_oct(notes)
-                pcs = PITCH_CLASSES.index(note)
-            else:
-                pcs = PITCH_CLASSES.index(notes)
-        elif type(notes) == list:
-            pcs = []
-            notes_len = len(notes)
-            for n in range(notes_len):
-                if not notes[n].isalpha():
-                    note = remove_oct(notes[n])
-                    pcs.append(PITCH_CLASSES.index(note))
+    Args:
+        notes: Single note string or list of note strings with octaves
+
+    Returns:
+        Index or list of indices in NOTES
+    """
+    if isinstance(notes, str):
+        return NOTES.index(notes)
+    elif isinstance(notes, list):
+        return [NOTES.index(note) for note in notes]
+    else:
+        raise TypeError(f"Notes must be a str or list[str]. Got: {type(notes)}")
+
+
+def get_intervals(notes: List[str]) -> List[int]:
+    """
+    Generate a list of intervals from a given melody.
+    Total intervals will be len(notes) - 1.
+
+    Difference between index values in NOTES corresponds to distance in semitones.
+
+    Args:
+        notes: List of note strings with octaves
+
+    Returns:
+        List of interval distances in semitones
+    """
+    indices = get_index(notes)
+    return [indices[i] - indices[i - 1] for i in range(1, len(indices))]
+
+
+def count_pcs(all_tracks: Dict) -> Dict[int, int]:
+    """
+    Count the number of instances of each pitch class in all tracks.
+
+    Args:
+        all_tracks: Dictionary of parsed MIDI tracks
+
+    Returns:
+        Dictionary mapping pitch class integers to total appearances
+    """
+    pc_totals = {i: 0 for i in range(12)}
+    notes = []
+
+    for track_key in all_tracks:
+        if track_key == "track 0":
+            continue
+
+        curr_track = all_tracks[track_key]
+        for msg in curr_track:
+            if hasattr(msg, "note") and hasattr(msg, "velocity"):
+                if msg.velocity != 0:
+                    note_name = MIDI_num_to_note_name(msg.note)
+                    notes.append(get_pcs(note_name))
+
+    for pc in notes:
+        pc_totals[pc] += 1
+
+    return pc_totals
+
+
+def check_range(notes: List[str], inst_range: List[str]) -> List[str]:
+    """
+    Check for and remove any notes not within the range of a given instrument.
+
+    Args:
+        notes: List of note strings
+        inst_range: List of valid notes for the instrument
+
+    Returns:
+        Modified note list with out-of-range notes removed
+    """
+    diff = get_diff(notes, inst_range)
+    if diff:
+        notes = [note for note in notes if note not in diff]
+    return notes
+
+
+def get_diff(notes: List[str], inst_range: List[str]) -> List[str]:
+    """
+    Get notes not in range of a given instrument.
+
+    Args:
+        notes: List of note strings
+        inst_range: List of valid notes for the instrument
+
+    Returns:
+        List of notes outside the instrument range
+    """
+    return [note for note in notes if note not in inst_range]
+
+
+def get_range(notes: List[str]) -> tuple:
+    """
+    Get the lowest and highest note in a given set of notes.
+
+    Args:
+        notes: List of note strings with octaves
+
+    Returns:
+        Tuple of (min_index, max_index) in NOTES
+    """
+    indices = [NOTES.index(note) for note in notes]
+    return min(indices), max(indices)
+
+
+def get_comp_pcs(comp: Composition) -> Dict:
+    """
+    Build a dictionary of pitch class information from a given composition object.
+
+    Args:
+        comp: Composition object to analyze
+
+    Returns:
+        Dictionary containing pitch class information for each part
+    """
+    if len(comp.parts) == 0:
+        return {}
+
+    info = {}
+    for part_name, part in comp.parts.items():
+        if isinstance(part, (Melody, Chord)):
+            pcs = part.pcs if part.pcs else get_pcs(part.notes)
+            info[part_name] = {"name": part.instrument, "pcs": pcs}
+        elif isinstance(part, list):
+            for idx, item in enumerate(part):
+                if isinstance(item, (Melody, Chord)):
+                    pcs = item.pcs if item.pcs else get_pcs(item.notes)
+                    info[f"{part_name}_{idx}"] = {"name": item.instrument, "pcs": pcs}
                 else:
-                    pcs.append(PITCH_CLASSES.index(notes[n]))
+                    raise TypeError(
+                        f"Invalid part type. Expected Melody or Chord, got: {type(item)}"
+                    )
         else:
             raise TypeError(
-                "notes must be a list[int] or single int! " "type is", type(notes)
-            )
-        return pcs
-
-    # TODO: TEST THIS
-    def count_pcs(self, tracks):
-        """
-        takes a list tracks (ideally parsed with midi.parse_midi()), then
-        counts the number of instances of each pitch class in each track
-
-        returns:
-            dict(key = pitch class integer, value = total appearances)
-        """
-        pc_totals = {
-            0: 0,
-            1: 0,
-            2: 0,
-            3: 0,
-            4: 0,
-            5: 0,
-            6: 0,
-            7: 0,
-            8: 0,
-            9: 0,
-            10: 0,
-            11: 0,
-        }
-        for track in tracks:
-            # convert all MIDI note numbers to
-            # note name strings, then pitch classes (obvs not ideal)
-            notes = []
-            for n in range(len(tracks.notes)):
-                notes.append(self.get_pcs(MIDI_num_to_note_name(track.notes[n])))
-            for key in pc_totals:
-                pc_totals[key] += notes.count(key)
-        return pc_totals
-
-    @staticmethod
-    def get_index(notes):
-        """
-        gets the index or list of indices of a given note or
-        list of notes in NOTES.
-
-        note name str must have an assigned octave between 0-8.
-
-        the returned list[int] should be used by transpose() with
-        oct_eq set to False. those resulting values should be mapped
-        back against NOTES to get octave-accurate transposed notes
-        """
-        if type(notes) == str:
-            return NOTES.index(notes)
-        elif type(notes) == list:
-            indices = []
-            notes_len = len(notes)
-            for n in range(notes_len):
-                indices.append(NOTES.index(notes[n]))
-            return indices
-        else:
-            raise TypeError(
-                "notes must be a single str or list[str]! " "\ntype is:", type(notes)
+                f"Invalid part type. Expected Melody, Chord, or list, got: {type(part)}"
             )
 
-    ### Pitch Class Set ###
+    return info
 
-    # TODO
-    def find_normal_order(self, notes):
-        """
-        NOTE: Not ready! maybe match against SETS to see if it's actually
-              in normal order
 
-        takes a list of note name strings, converts them to pitch class integers,
-        and finds an ordering "most packed to the left"
+def parse_midi_file(file_name: str) -> Dict:
+    """
+    Analyze a given MIDI file.
 
-        returns pcs (list[int]) in normal order.
-        """
-        pcs = self.get_pcs(notes)  # get pcs from a given set
-        pcs.sort()  # sort in ascending order
-        # rotate until smallest interval in the set is
-        # at the left, and range of set is the smallest possible
-        while pcs[1] - pcs[0] >= 2:
-            pc = pcs.pop(0)
-            pcs.append(pc)
-        return pcs
+    Args:
+        file_name: Name of MIDI file to parse
 
-    # TODO
-    def find_set(self, notes):
-        """
-        Given a set of notes, find an associated Forte set
+    Returns:
+        Dictionary containing tempo, pitch classes, rhythms, and dynamics for each track
+    """
+    result = {"Tempo": 0, "Pitch Classes": {}, "Rhythms": {}, "Dynamics": {}}
 
-            Reduce all notes (removing duplicates in any octave)
-            in a given melody to an unordered set.
+    tracks, msgs = parse_midi(file_name)
 
-                Iterate through list, keeping track of each note
-                it comes across.
+    if msgs and hasattr(msgs[0], "tempo"):
+        result["Tempo"] = tempo2bpm(msgs[0].tempo)
 
-                If we haven't seen this before, add to
-                list, otherwise skip
+    pitch_classes = {}
+    dynamics = {}
 
-            for note in notes:
-                # remove the octave and see if we've seen this note before
-                if note in found_notes:
+    for track_idx, track in tracks.items():
+        pcs = []
+        vel = []
+
+        for msg in track:
+            if hasattr(msg, "velocity") and hasattr(msg, "note"):
+                if msg.velocity == 0:
                     continue
-                else:
-                    found_notes.append(note)
 
-            Convert to pitch class integers, then sort in ascending order
+                note = MIDI_num_to_note_name(msg.note)
+                pcs.append(get_pcs(note))
+                vel.append(msg.velocity)
 
-            Convert to normal order, then compare against SETS
+        pitch_classes[track_idx] = pcs
+        dynamics[track_idx] = vel
 
-            NOTE: will need to expand SETS to include all sets in the Forte collection,
-                  not just 5-9 note sets
-        """
-        ...
+    result["Pitch Classes"] = pitch_classes
+    result["Dynamics"] = dynamics
 
-    ### Intervals ###
-
-    def get_intervals(self, notes):
-        """
-        generates a list of intervals from a given melody.
-        total intervals will be len(m.notes)-1.
-
-        difference between index values with NOTES corresponds to distance
-        in semi-tones!
-        """
-        intervals = []
-        ind = self.get_index(notes)
-        ind_len = len(ind)
-        for n in range(1, ind_len):
-            intervals.append(ind[n] - ind[n - 1])
-        return intervals
-
-    # TODO
-    def get_interval_vector(self, notes):
-        """
-        gets the interval vector of a given set of
-        notes.
-
-        returns a dict[interval : frequency]
-        """
-        ...
-
-    def check_range(self, notes: list[str], ran: list[str]):
-        """
-        checks for and removes and removes any notes
-        not within the range of a given instrument.
-
-        returns a modified note list[str]
-        """
-        diff = self.get_diff(notes, ran)
-        if len(diff) > 0:
-            for note in range(len(diff)):
-                notes.remove(diff[note])
-        return notes
-
-    @staticmethod
-    def get_diff(notes, ran):
-        """removes notes not in range of a given instrument with a provided range"""
-        return [
-            notes for notes in notes + ran if notes not in notes or notes not in ran
-        ]
-
-    @staticmethod
-    def get_range(notes: list[str]):
-        """
-        returns the lowest and highest note in a given set of notes
-        in a tuple: (min, max)
-        """
-        min, max = 0, 0
-        for note in notes:
-            (min, max) = (10000, -1)
-            n = NOTES.index(note)
-            if n < int(min):
-                min = n
-            elif n > int(max):
-                max = n
-        return min, max
-
-    ### 12 Tone Functions ###
-
-    # TODO
-    def get_12tone_matrix(self, row, intervals):
-        """
-        NOTE: NOT READY
-
-        Generates a 2-D array/12-tone matrix from a given pitch class set (pcs = list[int]).
-        Requires a list of 11 unique positive intervals between 1-11 ([1, 4, 2, 6]) to iterate off of.
-
-        The matrix is generating by appending a transposition
-        of the original row to each subsequent index.
-        All other information, such as retrogressions, inversions, and
-        retrogressions + inversions can be found using some print tricks.
-
-        Returns a 2-D matrix - 'm'
-
-        ---------
-
-        Print original row:
-            print(m[0])
-
-        Print each row retrograde:
-            for i in range(len(m[i])):
-                retro = m[i]
-                retro.reverse()
-                print(retro)
-
-        Print each row inversions (matrix column, top to bottom):
-            for i in range(len(m))
-                inv = [row[i] for row in m]
-                print(inv)
-
-        Print each row retrograde inversions (matrix column, bottom to top):
-            for i in range(len(m))
-                ret_inv = [row[i] for row in m]
-                ret_inv[i].reverse()
-                print(ret_inv)
-
-        --------
-        NOTE: maybe there's a way to populate the matrix using syntax like this:
-        arr = [[r]*cols]*rows, where r is a modified version (transposition) of the
-        original row.
-
-        rows and cols are declared as a tuple (rows, cols = (n, n)
-        where n is some int)
-        """
-        m = [[]]
-        mod = Modify()
-        # add original row to first matrix row
-        for i in range(len(intervals)):
-            r = mod.transpose(row, intervals[i])
-            print("\nadding P", intervals[i], ":", r)
-            m.insert(i, r)
-        return m
-
-    @staticmethod
-    def print_matrix(matrix):
-        """
-        Display a twelve-tone matrix (2D list)
-        """
-        for x in matrix:
-            for y in x:
-                print(y, end=" ")
-            print()
-
-    def get_comp_pcs(self, comp: Composition) -> dict:
-        """
-        builds a dictionary of pitch class information from
-        a given composition object
-        """
-        if len(comp.parts) == 0:
-            return {}
-
-        info = {}
-        for part in comp.parts:
-            if isinstance(comp.parts[part], Melody) or isinstance(
-                    comp.parts[part], Chord
-            ):
-                info.update(
-                    {
-                        "name": comp.parts[part].instrument,
-                        "pcs": (
-                            comp.parts[part].pcs
-                            if len(comp.parts[part]) > 0
-                            else self.get_pcs(comp.parts[part].notes)
-                        ),
-                    }
-                )
-            elif isinstance(comp.parts[part], list):
-                for item in comp.parts[part]:
-                    if isinstance(item, Melody) or isinstance(item, Chord):
-                        info.update(
-                            {
-                                "name": item.instrument,
-                                "pcs": (
-                                    item.pcs
-                                    if len(item.pcs) > 0
-                                    else self.get_pcs(item.notes)
-                                ),
-                            }
-                        )
-                    else:
-                        raise TypeError(
-                            "incorrect type for a part! "
-                            "\nmust be melody, chord, or list (of melody or chord) objects "
-                            f"\nitem == {type(item)}"
-                        )
-            else:
-                raise TypeError(
-                    "incorrect type for a part! "
-                    "\nmust be melody, chord, or list (of melody or chord) objects "
-                    f"\nself.parts[{part}] == {type(comp.parts[part])}"
-                )
-        return info
-
-    ### MIDI Analysis Functions ###
-
-    def parse_MIDI(self, file_name: str):
-        """
-        analyzes a given MIDI file with a given file_name (str)
-
-        returns a dictionary with nested dictionaries containing
-        information about pitch class content, tempo, and velocities
-        for each track
-
-        TODO: still need to figure out rhythms...
-              extract start/end times for each note, subtract end
-              from start, then store?
-        """
-        dynamics = {}
-        pitch_classes = {}
-        res = {"Tempo": 0, "Pitch Classes": {}, "Rhythms": {}, "Dynamics": {}}
-        # get MidiTrack() dict and Messages() list
-        tracks, msgs = parse_midi(file_name)
-        # get global tempo
-        res["Tempo"] = tempo2bpm(msgs[0].tempo)
-        # get pitch class integers and velocities from each track
-        for t in range(len(tracks)):
-            pcs = []
-            vel = []
-            track = tracks[f"track {str(t)}"]
-            for i in range(len(track)):
-                if hasattr(track[i], "velocity"):
-                    # skip any silent notes (rests)
-                    if track[i].velocity == 0:
-                        continue
-                    # translate to note name...
-                    note = MIDI_num_to_note_name(track[i].note)
-                    # ...then to PC integer because reasons
-                    pcs.append(self.get_pcs(note))
-                    vel.append(track[i].velocity)
-            pitch_classes[f"track {str(t)}"] = pcs
-            dynamics[f"track {str(t)}"] = vel
-
-        res["Pitch Classes"].update(pitch_classes)
-        res["Dynamics"].update(dynamics)
-
-        return res
+    return result
 
 
-""""
-some additional methods for handling meter. these are mainly used 
-sporadically and didn't really warrant being part of the larger analyze method class,
-at least for now...
-"""
-
-
-def is_simple(meter):
-    """returns True if meter is a simple meter"""
+def is_simple(meter: tuple) -> bool:
+    """Check if meter is a simple meter."""
     return is_valid(meter)
 
 
-def is_compound(meter):
-    """returns True if meter is a compound meter"""
-    return is_valid(meter) and meter[0] % 3 == 0 and 6 <= meter[0]
+def is_compound(meter: tuple) -> bool:
+    """Check if meter is a compound meter."""
+    return is_valid(meter) and meter[0] % 3 == 0 and meter[0] >= 6
 
 
-def is_valid(meter):
-    """returns True if meter is valid (rational)"""
+def is_valid(meter: tuple) -> bool:
+    """Check if meter is valid (rational)."""
     return meter[0] > 0 and valid_beat_duration(meter)
 
 
-def valid_beat_duration(meter):
-    """returns True if meter denominator is a valid beat duration"""
-    return True if meter[1] in BEATS else False
+def valid_beat_duration(meter: tuple) -> bool:
+    """Check if meter denominator is a valid beat duration."""
+    return meter[1] in BEATS

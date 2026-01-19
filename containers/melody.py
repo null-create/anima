@@ -37,15 +37,18 @@ class Melody(Container):
         """
         Returns the duration (float) of a melody in seconds.
         """
-        return sum(self.rhythms)
+        duration = 0.0
+        for rhythm in self.rhythms:
+            duration += rhythm
+        return duration
 
     def is_empty(self) -> bool:
         """
         Returns true if the container is empty, otherwise false
         """
-        if len(self.notes) == 0 and len(self.rhythms) == 0 and len(self.dynamics) == 0:
-            return True
-        return False
+        return (
+            len(self.notes) == 0 and len(self.rhythms) == 0 and len(self.dynamics) == 0
+        )
 
     def get_meta_data(self) -> dict:
         """

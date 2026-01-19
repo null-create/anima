@@ -1,6 +1,5 @@
 """
-module for modifying composition() objects and imported MIDI files.
-
+Module for modifying composition() objects and musical elements.
 
 TODO:
 
@@ -13,286 +12,304 @@ TODO:
 """
 
 from __future__ import annotations
-
+from typing import List, Union
 from random import randint, shuffle
 
-from utils.tools import to_str, is_pos, oct_equiv, scale_to_tempo
+from utils.tools import to_str, is_pos, oct_equiv
 from containers.melody import Melody
-from core.constants import NOTES
+from containers.chord import Chord
+from core.constants import NOTES, MIN_TRANSPOSITION, MAX_TRANSPOSITION
 
 
-class Modify:
+def transpose(
+    pcs: List[int], dist: Union[int, List[int]], oct_eq: bool = True
+) -> List[int]:
     """
-    a class of modification methods that work with composition objects and
-    imported MIDI files.
+    Transpose a list of pitch classes using a supplied interval or list of intervals.
+
+    Args:
+        pcs: List of pitch class integers
+        dist: Single interval (int) or list of intervals to transpose by
+        oct_eq: If True, keep results within 0-11 range (octave equivalence)
+
+    Returns:
+        Modified list of pitch class integers
     """
+    result = pcs.copy()
 
-    def __init__(self) -> None:
-        pass
-
-    @staticmethod
-    def transpose(
-        pcs: list[int], dist: int | list[int], oct_eq: bool = True
-    ) -> list[int]:
-        """
-        transpose a list of pitch classes (list[int]) using a supplied interval t (int),
-        or list of intervals t (list[int]).
-
-        if oct_eq is set to False, then resulting values may be greater than
-        11. This may work when working with a source scale (since it goes
-        from octaves 2-5) as long as the resulting value n is n <= len(source)-1.
-
-        use Modify.get_index() prior to calling Modify.transpose() when working with various
-        composition objects. indices in NOTES function as int representations
-        of notes.
-
-        returns a modified pcs (list[int]) or modified pitch class (int).
-        """
-        pcs_len = len(pcs)
-        # modify with a single interval across all pitch-class integers
-        if type(dist) == int:
-            for i in range(pcs_len):
-                pcs[i] += dist
-        # modify with a list of intervals across all pitch-class integers.
-        # this allows for each pitch-class to be transposed by a unique
-        # distance, allowing for rapid variation generation.
-        # it could also be a list of the same repeated value but that
-        # might be less efficient.
-        elif type(dist) == list:
-            for i in range(pcs_len):
-                pcs[i] += dist[i]
-        else:
-            raise TypeError("incorrect input type. must be single int or list of ints!")
-        # keep resulting pcs values between 0 and 11 by default.
-        if oct_eq:
-            pcs = oct_equiv(pcs)
-        return pcs
-
-    def transpose_melody(self, notes: list[int], dist: int):
-        """
-        wrapper to use with melody() objects.
-        returns a new note list[str]
-        """
-        if dist > 11 or dist < 1:
-            raise ValueError("distance must be an int: 1<=n<=11")
-        pcs = self.transpose(self.get_index(notes), dist=dist, oct_eq=False)
-        return to_str(pcs, oct_eq=False)
-
-    def transpose_chords(self, chords: list, dist: int) -> list:
-        """
-        wrapper to use with chord() lists
-        """
-        if dist > 11 or dist < 1:
-            raise ValueError("distance must be an int: 1<=n<=11")
-
-        total_chords = len(chords)
-        for c in range(total_chords):
-            pcs = self.transpose(
-                self.get_index(chords[c].notes), dist=dist, oct_eq=False
+    if isinstance(dist, int):
+        result = [pc + dist for pc in result]
+    elif isinstance(dist, list):
+        if len(dist) != len(pcs):
+            raise ValueError(
+                f"Interval list length ({len(dist)}) must match "
+                f"pitch class list length ({len(pcs)})"
             )
-            chords[c].notes = to_str(pcs, oct_eq=False)
+        result = [pc + interval for pc, interval in zip(result, dist)]
+    else:
+        raise TypeError(f"Distance must be int or list[int]. Got: {type(dist)}")
 
-        return chords
+    if oct_eq:
+        result = oct_equiv(result)
 
-    def get_intervals(self, notes: list[str]) -> list[int]:
-        """
-        generates a list of intervals from a given melody.
-        total intervals will be len(m.notes)-1.
+    return result
 
-        difference between index values with NOTES corresponds to distance
-        in semi-tones!
-        """
-        intervals = []
-        index_list = self.get_index(notes)
-        ind_len = len(index_list)
-        for n in range(1, ind_len):
-            intervals.append(index_list[n] - index_list[n - 1])
-        return intervals
 
-    @staticmethod
-    def get_index(notes: str | list[str]) -> int | list[int]:
-        """
-        gets the index or list of indices of a given note or
-        list of notes in NOTES.
+def is_valid_transposition(dist: int) -> bool:
+    """
+    Check if transposition distance is valid.
 
-        note name str must have an assigned octave between 0-8.
+    Args:
+        dist: Transposition distance in semitones
 
-        the returned int or list[int] should be used by transpose() with
-        oct_eq set to False. those resulting values should be mapped
-        back against NOTES to get octave-accurate transposed notes.
-        """
-        if type(notes) == str:
-            return NOTES.index(notes)
-        elif type(notes) == list:
-            indices = []
-            note_len = len(notes)
-            for n in range(note_len):
-                indices.append(NOTES.index(notes[n]))
-            return indices
-        else:
-            raise TypeError(
-                "notes must be a single str or list[str]! type is:", type(notes)
-            )
+    Returns:
+        True if distance is within valid range
+    """
+    return MIN_TRANSPOSITION <= dist <= MAX_TRANSPOSITION
 
-    @staticmethod
-    def retrograde(melody: Melody) -> Melody:
-        """
-        reverses the elements in a melody object (notes, rhythms, dynamics)
-        returns a duplicated melody() object
-        """
-        retro = melody
-        retro.notes.reverse()
-        retro.dynamics.reverse()
-        retro.rhythms.reverse()
-        return retro
 
-    def invert(self, notes: list[str]) -> list[str | list[str]]:
-        """
-        inverts a melody. returns a new note list[str]
-        """
+def transpose_melody(notes: List[str], dist: int) -> List[str]:
+    """
+    Transpose a melody by a given distance.
 
-        inverted = []  # list of inverted intervals
-        intervals = self.get_intervals(notes)  # get list of intervals and invert values
-        total_intervals = len(intervals)
-        for i in range(total_intervals):
-            if is_pos(intervals[i]):
-                inverted.append(-abs(intervals[i]))
-            else:
-                inverted.append(abs(intervals[i]))
+    Args:
+        notes: List of note strings with octaves
+        dist: Transposition distance in semitones (1-11)
 
-        # get index of first note. we don't need them all.
-        mel = []
-        mel.append(self.get_index(notes))
+    Returns:
+        New list of transposed note strings
+    """
+    if not is_valid_transposition(dist):
+        raise ValueError(
+            f"Distance must be between {MIN_TRANSPOSITION} and {MAX_TRANSPOSITION}. "
+            f"Got: {dist}"
+        )
 
-        # build new melody note list off this inverted interval list
-        for i in range(total_intervals):
-            mel.append(mel[i] + inverted[i])
+    indices = [NOTES.index(note) for note in notes]
+    transposed_indices = transpose(indices, dist=dist, oct_eq=False)
+    return to_str(transposed_indices, oct_eq=False)
 
-        return to_str(mel, oct_eq=False)
 
-    def retro_invert(self, m: Melody) -> Melody:
-        """
-        applies both the retrograde and inversion operations.
-        returns a separate Melody() object to be appended
-        to the original, if needed.
-        """
-        ret = self.retrograde(m)
-        ret.notes = self.invert(ret.notes)
-        return ret
+def transpose_chords(chords: List[Chord], dist: int) -> List[Chord]:
+    """
+    Transpose a list of chords by a given distance.
 
-    @staticmethod
-    def fragment(orig_melody: Melody) -> Melody:
-        """
-        randomly picks a subset of notes, rhythms, and dynamics (all
-        from the same position in the melody) from a given melody and
-        returns this subset as a melodic fragment in a new melody() object
-        """
-        # copy other info from supplied melody object
-        # to not miss anything important. remove initial
-        # notes ect so we can reuse the lists.
-        frag = orig_melody
-        frag.notes = []
-        frag.rhythms = []
-        frag.dynamics = []
+    Args:
+        chords: List of Chord objects
+        dist: Transposition distance in semitones (1-11)
 
-        # generate fragment size. any subset will necessarily
-        # be at least one element less than the original set.
-        frag_len = randint(3, len(orig_melody.notes) - 2)
+    Returns:
+        List of transposed Chord objects
+    """
+    if not is_valid_transposition(dist):
+        raise ValueError(
+            f"Distance must be between {MIN_TRANSPOSITION} and {MAX_TRANSPOSITION}. "
+            f"Got: {dist}"
+        )
 
-        # pick starting index and build fragment from here
-        strt = randint(0, len(orig_melody.notes) - frag_len)
-        for _ in range(frag_len):
-            frag.notes.append(orig_melody.notes[strt])
-            frag.rhythms.append(orig_melody.rhythms[strt])
-            frag.dynamics.append(orig_melody.dynamics[strt])
-            strt += 1
+    result = []
+    for chord in chords:
+        new_chord = Chord(instrument=chord.instrument, tempo=chord.tempo)
+        new_chord.notes = transpose_melody(chord.notes, dist)
+        new_chord.rhythm = chord.rhythm
+        new_chord.dynamic = chord.dynamic
+        new_chord.info = chord.info
+        new_chord.pcs = chord.pcs
+        new_chord.source_data = chord.source_data
+        new_chord.source_notes = chord.source_notes
+        result.append(new_chord)
 
-        return frag
+    return result
 
-    @staticmethod
-    def mutate(melody: Melody) -> Melody:
-        """
-        randomly permutates the order of notes, rhythms, and dynamics
-        in a given melody object. each list is permutated independently of
-        each other, meaning original associations aren't preserved!
 
-        returns a new Melody() object containing this permutation
-        """
-        mutant = melody
-        shuffle(mutant.notes)
-        shuffle(mutant.rhythms)
-        shuffle(mutant.dynamics)
-        return mutant
+def retrograde(melody: Melody) -> Melody:
+    """
+    Reverse the melodic parameters in a melody object.
 
-    @staticmethod
-    def rotate(notes: list[str]) -> list[str]:
-        """
-        moves the first note of a given list of notes
-        to the end of the list.
+    Args:
+        melody: Melody object to reverse
 
-        use method in a loop to rotate n times (such that you don't
-        return to the original ordering) to generate a series
-        of "modes."
+    Returns:
+        New Melody object with reversed elements
+    """
+    retro = Melody(tempo=melody.tempo, instrument=melody.instrument)
+    retro.notes = list(reversed(melody.notes))
+    retro.rhythms = list(reversed(melody.rhythms))
+    retro.dynamics = list(reversed(melody.dynamics))
+    retro.info = melody.info
+    retro.pcs = melody.pcs
+    retro.source_data = melody.source_data
+    retro.source_notes = melody.source_notes
+    return retro
 
-        returns a list[str]
-        """
-        notes.append(notes.pop(0))
+
+def invert(notes: List[str]) -> List[str]:
+    """
+    Invert a melody by inverting all intervals.
+
+    Args:
+        notes: List of note strings with octaves
+
+    Returns:
+        New list of inverted note strings
+    """
+    indices = [NOTES.index(note) for note in notes]
+    intervals = [indices[i] - indices[i - 1] for i in range(1, len(indices))]
+
+    inverted_intervals = [-interval for interval in intervals]
+
+    result_indices = [indices[0]]
+    for interval in inverted_intervals:
+        result_indices.append(result_indices[-1] + interval)
+
+    return to_str(result_indices, oct_eq=False)
+
+
+def retrograde_inversion(melody: Melody) -> Melody:
+    """
+    Apply both retrograde and inversion operations.
+
+    Args:
+        melody: Melody object to transform
+
+    Returns:
+        New Melody object with retrograde inversion applied
+    """
+    ret = retrograde(melody)
+    ret.notes = invert(ret.notes)
+    return ret
+
+
+def fragment(melody: Melody) -> Melody:
+    """
+    Extract a random subset of notes, rhythms, and dynamics from a melody.
+
+    Args:
+        melody: Original melody to fragment
+
+    Returns:
+        New Melody object containing the fragment
+    """
+    if len(melody.notes) < 4:
+        raise ValueError("Melody must have at least 4 notes to fragment")
+
+    frag = Melody(tempo=melody.tempo, instrument=melody.instrument)
+    frag.info = melody.info
+    frag.pcs = melody.pcs
+    frag.source_data = melody.source_data
+    frag.source_notes = melody.source_notes
+
+    frag_len = randint(3, len(melody.notes) - 2)
+    start_idx = randint(0, len(melody.notes) - frag_len)
+
+    frag.notes = melody.notes[start_idx : start_idx + frag_len]
+    frag.rhythms = melody.rhythms[start_idx : start_idx + frag_len]
+    frag.dynamics = melody.dynamics[start_idx : start_idx + frag_len]
+
+    return frag
+
+
+def mutate(melody: Melody) -> Melody:
+    """
+    Randomly permutate the order of notes, rhythms, and dynamics independently.
+
+    Args:
+        melody: Melody object to mutate
+
+    Returns:
+        New Melody object with permuted elements
+    """
+    mutant = Melody(tempo=melody.tempo, instrument=melody.instrument)
+    mutant.notes = melody.notes.copy()
+    mutant.rhythms = melody.rhythms.copy()
+    mutant.dynamics = melody.dynamics.copy()
+    mutant.info = melody.info
+    mutant.pcs = melody.pcs
+    mutant.source_data = melody.source_data
+    mutant.source_notes = melody.source_notes
+
+    shuffle(mutant.notes)
+    shuffle(mutant.rhythms)
+    shuffle(mutant.dynamics)
+
+    return mutant
+
+
+def rotate(notes: List[str]) -> List[str]:
+    """
+    Move the first note of a list to the end.
+
+    Use in a loop to rotate n times to generate a series of modes.
+
+    Args:
+        notes: List of note strings
+
+    Returns:
+        Rotated list of note strings
+    """
+    if not notes:
         return notes
+    return notes[1:] + [notes[0]]
 
-    @staticmethod
-    def change_dynamics(dyn: int | list, diff: int) -> int | list:
-        """
-        makes a single or list of dynamics louder or softer
-        by a specified amount. returns a modified dynamics list[int]
 
-        needs to be an int that's a multiple of 4 and
-        within the specified range! MIDI velocities start
-        at 0 and increase by 4 until 127.
-        """
-        if type(dyn) == int:
-            if dyn > 123:
-                raise ValueError(
-                    "supplied dynamic is too high. " f"max is 123. dyn supplied: {dyn}"
-                )
-            dyn += diff
-        elif type(dyn) == list:
-            total_dynamics = len(dyn)
-            for d in range(total_dynamics):
-                if dyn[d] < 123:
-                    dyn[d] += diff
+def change_dynamics(
+    dynamics: Union[int, List[int]], diff: int
+) -> Union[int, List[int]]:
+    """
+    Make dynamics louder or softer by a specified amount.
 
-        return dyn
+    Args:
+        dynamics: Single dynamic or list of dynamics
+        diff: Amount to change (must be multiple of 4)
 
-    @staticmethod
-    def change_duration(rhythm: float, val: float) -> float:
-        """
-        Augment or diminish a single rhythmic duration.
-        """
-        rhythm += val
-        return rhythm
+    Returns:
+        Modified dynamic(s)
+    """
+    if isinstance(dynamics, int):
+        if dynamics > 123:
+            raise ValueError(f"Dynamic too high. Max is 123. Got: {dynamics}")
+        return dynamics + diff
+    elif isinstance(dynamics, list):
+        return [d + diff if d <= 123 else d for d in dynamics]
+    else:
+        raise TypeError(f"Dynamics must be int or list[int]. Got: {type(dynamics)}")
 
-    def change_durations(self, rhythms: list[float], val: float | list[float]) -> list:
-        """
-        Augment or diminish a Melody or Chord() object's rhythms by a specified amount.
-        If a list of alteration values are provided, they must be of equal length
-        of the list of rhythm values.
-        """
-        if type(val) == float:
-            for i in range(len(rhythms)):
-                rhythms[i] += val
 
-        elif type(val) == list:
-            if len(val) != len(rhythms):
-                raise ValueError(
-                    f"alteration values list must be same length as rhythms list\n"
-                    f"vals: {len(val)} rhythms: {len(rhythms)}"
-                )
-            for i in range(len(rhythms)):
-                rhythms[i] += val[i]
-        else:
-            raise TypeError(
-                "alteration values must be either type float or list[float].",
-                f"vals: {type(val)}",
+def change_duration(rhythm: float, val: float) -> float:
+    """
+    Augment or diminish a single rhythmic duration.
+
+    Args:
+        rhythm: Original rhythm duration
+        val: Amount to change
+
+    Returns:
+        Modified rhythm duration
+    """
+    return rhythm + val
+
+
+def change_durations(
+    rhythms: List[float], val: Union[float, List[float]]
+) -> List[float]:
+    """
+    Augment or diminish rhythm durations by specified amounts.
+
+    Args:
+        rhythms: List of rhythm durations
+        val: Single value or list of values to change by
+
+    Returns:
+        List of modified rhythm durations
+    """
+    if isinstance(val, float):
+        return [r + val for r in rhythms]
+    elif isinstance(val, list):
+        if len(val) != len(rhythms):
+            raise ValueError(
+                f"Alteration values list ({len(val)}) must match "
+                f"rhythms list length ({len(rhythms)})"
             )
-
-        return rhythms
+        return [r + v for r, v in zip(rhythms, val)]
+    else:
+        raise TypeError(f"Val must be float or list[float]. Got: {type(val)}")
