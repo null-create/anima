@@ -5,6 +5,7 @@ Utility functions for working with MIDI data and I/O
 from __future__ import annotations
 from typing import Tuple, List
 from os.path import join
+
 from mido import MidiFile
 from pretty_midi import PrettyMIDI, Instrument
 
