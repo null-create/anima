@@ -122,24 +122,21 @@ def transpose_chords(chords: List[Chord], dist: int) -> List[Chord]:
     return result
 
 
-def retrograde(melody: Melody) -> Melody:
+def retrograde(orig_melody: Melody) -> Melody:
     """
     Reverse the melodic parameters in a melody object.
 
     Args:
-        melody: Melody object to reverse
+        orig_melody: Melody object to reverse
 
     Returns:
-        New Melody object with reversed elements
+        New melody object is a deep copy of the original with notes, rhythms,
+        and dynamics reversed.
     """
-    retro = Melody(tempo=melody.tempo, instrument=melody.instrument)
-    retro.notes = list(reversed(melody.notes))
-    retro.rhythms = list(reversed(melody.rhythms))
-    retro.dynamics = list(reversed(melody.dynamics))
-    retro.info = melody.info
-    retro.pcs = melody.pcs
-    retro.source_data = melody.source_data
-    retro.source_notes = melody.source_notes
+    retro = orig_melody.copy()
+    retro.notes = list(reversed(orig_melody.notes))
+    retro.rhythms = list(reversed(orig_melody.rhythms))
+    retro.dynamics = list(reversed(orig_melody.dynamics))
     return retro
 
 
@@ -209,24 +206,17 @@ def fragment(melody: Melody) -> Melody:
     return frag
 
 
-def mutate(melody: Melody) -> Melody:
+def mutate(orig_melody: Melody) -> Melody:
     """
     Randomly permutate the order of notes, rhythms, and dynamics independently.
 
     Args:
-        melody: Melody object to mutate
+        orig_melody: Melody object to mutate
 
     Returns:
-        New Melody object with permuted elements
+        New Melody object with permuted elements created as a deep copy of the original
     """
-    mutant = Melody(tempo=melody.tempo, instrument=melody.instrument)
-    mutant.notes = melody.notes.copy()
-    mutant.rhythms = melody.rhythms.copy()
-    mutant.dynamics = melody.dynamics.copy()
-    mutant.info = melody.info
-    mutant.pcs = melody.pcs
-    mutant.source_data = melody.source_data
-    mutant.source_notes = melody.source_notes
+    mutant = orig_melody.copy()
 
     shuffle(mutant.notes)
     shuffle(mutant.rhythms)
