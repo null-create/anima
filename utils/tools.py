@@ -85,7 +85,7 @@ def remove_oct(a_note: str) -> str:
         return n[0]
 
 
-def oct_equiv(pitch):
+def oct_equiv(pitch: int | list) -> int | list:
     """
     Octave equivalence. Handles either a single int or list[int].
     Keeps a single pitch class integer within span of an octave (0 - 11).
