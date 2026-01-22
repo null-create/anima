@@ -3,11 +3,12 @@ This module handles mapping functions when converting raw data to index numbers,
 which will be used to map against newNotes()'s generated source scale in newMelody()
 """
 
-from containers.melody import Melody
+from __future__ import annotations
+
 from core.constants import ALPHABET
 
 
-def float_to_int(data):
+def float_to_int(data: list[float]) -> list[int]:
     """
     Converts an array of floats to an array of ints
     """
@@ -17,7 +18,7 @@ def float_to_int(data):
     return result
 
 
-def scale_the_scale(data):
+def scale_the_scale(data: list[int]) -> list[int]:
     """
     Scales individual data set integers such that data[i] <= len(data)-1
 
